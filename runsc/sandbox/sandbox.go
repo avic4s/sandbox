@@ -505,6 +505,23 @@ func (s *Sandbox) createSandboxProcess(conf *boot.Config, args *Args, startSyncF
 		}
 	}
 
+	if conf.ExtraArgs != nil {
+		for _, registeredArg := range conf.ExtraArgs.All() {
+			extraArgs, extraFiles, err := registeredArg.OnCreateSandboxProcess(s.ID)
+			if err != nil {
+				return fmt.Errorf("adding files from extra args: %v", err)
+			}
+			for _, arg := range extraArgs {
+				cmd.Args = append(cmd.Args, arg)
+			}
+			for arg, file := range extraFiles {
+				cmd.ExtraFiles = append(cmd.ExtraFiles, file)
+				cmd.Args = append(cmd.Args, arg+strconv.Itoa(nextFD))
+				nextFD++
+			}
+		}
+	}
+
 	// Detach from this session, otherwise cmd will get SIGHUP and SIGCONT
 	// when re-parented.
 	cmd.SysProcAttr.Setsid = true
