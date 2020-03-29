@@ -233,3 +233,118 @@ func TestToClone(t *testing.T) {
 		})
 	}
 }
+
+func TestVVReadToVV(t *testing.T) {
+	testCases := []struct {
+		comment     string
+		vv          VectorisedView
+		bytesToRead int
+		wantBytes   int
+	}{
+		{
+			comment:     "large VV, short read",
+			vv:          vv(30, "012345678901234567890123456789"),
+			bytesToRead: 10,
+			wantBytes:   10,
+		},
+		{
+			comment:     " largeVV, multiple views, short read",
+			vv:          vv(13, "123", "345", "567", "8910"),
+			bytesToRead: 6,
+			wantBytes:   6,
+		},
+		{
+			comment:     " smallVV (multiple views), large read",
+			vv:          vv(3, "1", "2", "3"),
+			bytesToRead: 10,
+			wantBytes:   3,
+		},
+		{
+			comment:     " smallVV (single view), large read",
+			vv:          vv(1, "1"),
+			bytesToRead: 10,
+			wantBytes:   1,
+		},
+		{
+			comment:     " emptyVV, large read",
+			vv:          vv(0, ""),
+			bytesToRead: 10,
+			wantBytes:   0,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.comment, func(t *testing.T) {
+			var readTo VectorisedView
+			inSize := tc.vv.Size()
+			copied := tc.vv.ReadToVV(&readTo, tc.bytesToRead)
+			if got, want := copied, tc.wantBytes; got != want {
+				t.Errorf("incorrect number of bytes copied returned in ReadToVV got: %d, want: %d, tc: %+v", got, want, tc)
+			}
+			if got, want := readTo.Size(), tc.wantBytes; got != want {
+				t.Errorf("incorrect number of bytes in readTo got: %d, want: %d", got, want)
+			}
+			if got, want := tc.vv.Size(), inSize-copied; got != want {
+				t.Errorf("test VV has incorrect size after reading got: %d, want: %d, tc.vv: %+v", got, want, tc.vv)
+			}
+		})
+	}
+}
+
+func TestVVRead(t *testing.T) {
+	testCases := []struct {
+		comment     string
+		vv          VectorisedView
+		bytesToRead int
+		wantBytes   int
+	}{
+		{
+			comment:     "large VV, short read",
+			vv:          vv(30, "012345678901234567890123456789"),
+			bytesToRead: 10,
+			wantBytes:   10,
+		},
+		{
+			comment:     " largeVV, multiple buffers, short read",
+			vv:          vv(13, "123", "345", "567", "8910"),
+			bytesToRead: 6,
+			wantBytes:   6,
+		},
+		{
+			comment:     " smallVV, large read",
+			vv:          vv(3, "1", "2", "3"),
+			bytesToRead: 10,
+			wantBytes:   3,
+		},
+		{
+			comment:     " smallVV, large read",
+			vv:          vv(1, "1"),
+			bytesToRead: 10,
+			wantBytes:   1,
+		},
+		{
+			comment:     " emptyVV, large read",
+			vv:          vv(0, ""),
+			bytesToRead: 10,
+			wantBytes:   0,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.comment, func(t *testing.T) {
+			readTo := NewView(tc.bytesToRead)
+			inSize := tc.vv.Size()
+			copied := tc.vv.Read(readTo)
+			readTo = readTo[:copied]
+			if got, want := copied, tc.wantBytes; got != want {
+				t.Errorf("incorrect number of bytes copied returned in ReadToVV got: %d, want: %d, tc: %+v", got, want, tc)
+			}
+			if got, want := len(readTo), tc.wantBytes; got != want {
+				t.Errorf("incorrect number of bytes in readTo got: %d, want: %d", got, want)
+			}
+			if got, want := tc.vv.Size(), inSize-copied; got != want {
+				t.Errorf("test VV has incorrect size after reading got: %d, want: %d, tc.vv: %+v", got, want, tc.vv)
+			}
+		})
+	}
+}

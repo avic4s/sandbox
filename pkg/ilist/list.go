@@ -61,14 +61,16 @@ func (ElementMapper) linkerFor(elem Element) Linker { return elem }
 //
 // +stateify savable
 type List struct {
-	head Element
-	tail Element
+	head  Element
+	tail  Element
+	count int
 }
 
 // Reset resets list l to the empty state.
 func (l *List) Reset() {
 	l.head = nil
 	l.tail = nil
+	l.count = 0
 }
 
 // Empty returns true iff the list is empty.
@@ -86,12 +88,17 @@ func (l *List) Back() Element {
 	return l.tail
 }
 
+// Len returns the number of elements in the list.
+func (l *List) Len() int {
+	return l.count
+}
+
 // PushFront inserts the element e at the front of list l.
 func (l *List) PushFront(e Element) {
 	linker := ElementMapper{}.linkerFor(e)
 	linker.SetNext(l.head)
 	linker.SetPrev(nil)
-
+	l.count++
 	if l.head != nil {
 		ElementMapper{}.linkerFor(l.head).SetPrev(e)
 	} else {
@@ -106,7 +113,7 @@ func (l *List) PushBack(e Element) {
 	linker := ElementMapper{}.linkerFor(e)
 	linker.SetNext(nil)
 	linker.SetPrev(l.tail)
-
+	l.count++
 	if l.tail != nil {
 		ElementMapper{}.linkerFor(l.tail).SetNext(e)
 	} else {
@@ -127,7 +134,7 @@ func (l *List) PushBackList(m *List) {
 
 		l.tail = m.tail
 	}
-
+	l.count += m.count
 	m.head = nil
 	m.tail = nil
 }
@@ -142,6 +149,7 @@ func (l *List) InsertAfter(b, e Element) {
 	eLinker.SetNext(a)
 	eLinker.SetPrev(b)
 	bLinker.SetNext(e)
+	l.count++
 
 	if a != nil {
 		ElementMapper{}.linkerFor(a).SetPrev(e)
@@ -159,6 +167,7 @@ func (l *List) InsertBefore(a, e Element) {
 	eLinker.SetNext(a)
 	eLinker.SetPrev(b)
 	aLinker.SetPrev(e)
+	l.count++
 
 	if b != nil {
 		ElementMapper{}.linkerFor(b).SetNext(e)
@@ -185,6 +194,7 @@ func (l *List) Remove(e Element) {
 		l.tail = prev
 	}
 
+	l.count--
 	linker.SetNext(nil)
 	linker.SetPrev(nil)
 }

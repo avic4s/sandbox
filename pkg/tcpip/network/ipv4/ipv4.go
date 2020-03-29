@@ -280,24 +280,27 @@ func (e *endpoint) WritePacket(r *stack.Route, gso *stack.GSO, params stack.Netw
 }
 
 // WritePackets implements stack.NetworkEndpoint.WritePackets.
-func (e *endpoint) WritePackets(r *stack.Route, gso *stack.GSO, pkts []stack.PacketBuffer, params stack.NetworkHeaderParams) (int, *tcpip.Error) {
+func (e *endpoint) WritePackets(r *stack.Route, gso *stack.GSO, pkts stack.PacketBufferList, params stack.NetworkHeaderParams) (int, *tcpip.Error) {
 	if r.Loop&stack.PacketLoop != 0 {
 		panic("multiple packets in local loop")
 	}
 	if r.Loop&stack.PacketOut == 0 {
-		return len(pkts), nil
+		return pkts.Len(), nil
 	}
 
 	// iptables filtering. All packets that reach here are locally
 	// generated.
 	ipt := e.stack.IPTables()
-	for i := range pkts {
-		if ok := ipt.Check(stack.Output, pkts[i]); !ok {
+	for pkt := pkts.Front(); pkt != nil; pkt = pkt.Next() {
+		if ok := ipt.Check(stack.Output, *pkt); !ok {
 			// iptables is telling us to drop the packet.
+			nextPkt := pkt.Next()
+			pkts.Remove(pkt)
+			pkt = nextPkt
 			continue
 		}
-		ip := e.addIPHeader(r, &pkts[i].Header, pkts[i].DataSize, params)
-		pkts[i].NetworkHeader = buffer.View(ip)
+		ip := e.addIPHeader(r, &pkt.Header, pkt.Data.Size(), params)
+		pkt.NetworkHeader = buffer.View(ip)
 	}
 	n, err := e.linkEP.WritePackets(r, gso, pkts, ProtocolNumber)
 	r.Stats().IP.PacketsSent.IncrementBy(uint64(n))
