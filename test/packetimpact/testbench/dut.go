@@ -305,6 +305,34 @@ func (dut *DUT) SetSockOptTimeval(sockfd, level, optname int32, tv *unix.Timeval
 	}
 }
 
+//RecvWithErrno calls recv on the DUT.
+func (dut *DUT) RecvWithErrno(sockfd, len, flags int32) (int32, []byte, error) {
+	dut.t.Helper()
+	req := pb.RecvRequest{
+		Sockfd: sockfd,
+		Len:    len,
+		Flags:  flags,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), *rpcTimeout)
+	defer cancel()
+	resp, err := dut.posixServer.Recv(ctx, &req)
+	if err != nil {
+		dut.t.Fatalf("failed to call Recv: %s", err)
+	}
+	return resp.GetRet(), resp.GetBuf(), syscall.Errno(resp.GetErrno_())
+}
+
+// Recv calls recv on the DUT and causes a fatal test failure if it doesn't
+// succeed.
+func (dut *DUT) Recv(sockfd, len, flags int32) []byte {
+	dut.t.Helper()
+	ret, buf, err := dut.RecvWithErrno(sockfd, len, flags)
+	if ret == -1 {
+		dut.t.Fatalf("failed to recv: %s", err)
+	}
+	return buf
+}
+
 // CloseWithErrno calls close on the DUT.
 func (dut *DUT) CloseWithErrno(fd int32) (int32, error) {
 	dut.t.Helper()
@@ -330,10 +358,11 @@ func (dut *DUT) Close(fd int32) {
 	}
 }
 
-// CreateListener makes a new TCP connection.  If it fails, the test ends.
-func (dut *DUT) CreateListener(typ, proto, backlog int32) (int32, uint16) {
+// CreateBoundSocket makes a new socket on the DUT, with type typ and protocol
+// proto, and bound to the IP address addr. Returns the new file descriptor and
+// the port that was selected on the DUT.
+func (dut *DUT) CreateBoundSocket(typ, proto int32, addr net.IP) (int32, uint16) {
 	dut.t.Helper()
-	addr := net.ParseIP(*remoteIPv4)
 	var fd int32
 	if addr.To4() != nil {
 		fd = dut.Socket(unix.AF_INET, typ, proto)
@@ -358,6 +387,12 @@ func (dut *DUT) CreateListener(typ, proto, backlog int32) (int32, uint16) {
 	default:
 		dut.t.Fatalf("unknown sockaddr type from getsockname: %t", sa)
 	}
-	dut.Listen(fd, backlog)
 	return fd, uint16(port)
+}
+
+// CreateListener makes a new TCP connection.  If it fails, the test ends.
+func (dut *DUT) CreateListener(typ, proto, backlog int32) (int32, uint16) {
+	fd, remotePort := dut.CreateBoundSocket(typ, proto, net.ParseIP(*remoteIPv4))
+	dut.Listen(fd, backlog)
+	return fd, remotePort
 }

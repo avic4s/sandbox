@@ -126,6 +126,18 @@ message CloseResponse {
   int32 errno_ = 2;
 }
 
+message RecvRequest {
+  int32 sockfd = 1;
+  int32 len = 2;
+  int32 flags = 3;
+}
+
+message RecvResponse {
+  int32 ret = 1;
+  int32 errno_ = 2;
+  bytes buf = 3;
+}
+
 service Posix {
   // Call socket() on the DUT.
   rpc Socket(SocketRequest) returns (SocketResponse);
@@ -147,4 +159,6 @@ service Posix {
       returns (SetSockOptTimevalResponse);
   // Call close() on the DUT.
   rpc Close(CloseRequest) returns (CloseResponse);
+  // Call recv() on the DUT.
+  rpc Recv(RecvRequest) returns (RecvResponse);
 }

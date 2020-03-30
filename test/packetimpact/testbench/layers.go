@@ -236,8 +236,10 @@ func (l *IPv4) toBytes() ([]byte, error) {
 		switch n := l.next().(type) {
 		case *TCP:
 			fields.Protocol = uint8(header.TCPProtocolNumber)
+		case *UDP:
+			fields.Protocol = uint8(header.UDPProtocolNumber)
 		default:
-			// TODO(b/150301488): Support more protocols, like UDP.
+			// TODO(b/150301488): Support more protocols as needed.
 			return nil, fmt.Errorf("can't deduce the ip header's next protocol: %+v", n)
 		}
 	}
@@ -301,6 +303,12 @@ func ParseIPv4(b []byte) (Layers, error) {
 			return nil, err
 		}
 		return append(layers, moreLayers...), nil
+	case uint8(header.UDPProtocolNumber):
+		moreLayers, err := ParseUDP(b[ipv4.length():])
+		if err != nil {
+			return nil, err
+		}
+		return append(layers, moreLayers...), nil
 	}
 	return nil, fmt.Errorf("can't deduce the ethernet header's next protocol: %d", h.Protocol())
 }
@@ -347,12 +355,16 @@ func (l *TCP) toBytes() ([]byte, error) {
 	}
 	if l.DataOffset != nil {
 		h.SetDataOffset(*l.DataOffset)
+	} else {
+		h.SetDataOffset(uint8(l.length()))
 	}
 	if l.Flags != nil {
 		h.SetFlags(*l.Flags)
 	}
 	if l.WindowSize != nil {
 		h.SetWindowSize(*l.WindowSize)
+	} else {
+		h.SetWindowSize(32768)
 	}
 	if l.UrgentPointer != nil {
 		h.SetUrgentPoiner(*l.UrgentPointer)
@@ -361,38 +373,55 @@ func (l *TCP) toBytes() ([]byte, error) {
 		h.SetChecksum(*l.Checksum)
 		return h, nil
 	}
-	if err := setChecksum(&h, l); err != nil {
+	if err := setTCPChecksum(&h, l); err != nil {
 		return nil, err
 	}
 	return h, nil
 }
 
-// setChecksum calculates the checksum of the TCP header and sets it in h.
-func setChecksum(h *header.TCP, tcp *TCP) error {
-	h.SetChecksum(0)
-	tcpLength := uint16(tcp.length())
-	current := tcp.next()
+// totalLength returns the length of the provided layer and all following
+// layers.
+func totalLength(l Layer) int {
+	totalLength := l.length()
+	current := l.next()
 	for current != nil {
-		tcpLength += uint16(current.length())
+		totalLength += current.length()
 		current = current.next()
 	}
+	return totalLength
+}
 
+// setUDPChecksum calculates the checksum of the UDP header and sets it in h.
+func layerChecksum(l Layer, protoNumber tcpip.TransportProtocolNumber) (uint16, error) {
+	totalLength := uint16(totalLength(l))
 	var xsum uint16
-	switch s := tcp.prev().(type) {
+	switch s := l.prev().(type) {
 	case *IPv4:
-		xsum = header.PseudoHeaderChecksum(header.TCPProtocolNumber, *s.SrcAddr, *s.DstAddr, tcpLength)
+		xsum = header.PseudoHeaderChecksum(protoNumber, *s.SrcAddr, *s.DstAddr, totalLength)
 	default:
 		// TODO(b/150301488): Support more protocols, like IPv6.
-		return fmt.Errorf("can't get src and dst addr from previous layer")
+		return 0, fmt.Errorf("can't get src and dst addr from previous layer")
 	}
-	current = tcp.next()
+	current := l.next()
+	var payloadBytes []byte
 	for current != nil {
 		payload, err := current.toBytes()
 		if err != nil {
-			return fmt.Errorf("can't get bytes for next header: %s", payload)
+			return 0, fmt.Errorf("can't get bytes for next header: %s", payload)
 		}
-		xsum = header.Checksum(payload, xsum)
+		payloadBytes = append(payloadBytes, payload...)
 		current = current.next()
+	}
+	xsum = header.Checksum(payloadBytes, xsum)
+	return xsum, nil
+}
+
+// setTCPChecksum calculates the checksum of the TCP header and sets it in h.
+func setTCPChecksum(h *header.TCP, tcp *TCP) error {
+	h.SetChecksum(0)
+	xsum, err := layerChecksum(tcp, header.TCPProtocolNumber)
+	if err != nil {
+		return err
 	}
 	h.SetChecksum(^h.CalculateChecksum(xsum))
 	return nil
@@ -441,6 +470,85 @@ func (l *TCP) length() int {
 // merge overrides the values in l with the values from other but only in fields
 // where the value is not nil.
 func (l *TCP) merge(other TCP) error {
+	return mergo.Merge(l, other, mergo.WithOverride)
+}
+
+// UDP can construct and match the UDP excapulation.
+type UDP struct {
+	LayerBase
+	SrcPort  *uint16
+	DstPort  *uint16
+	Length   *uint16
+	Checksum *uint16
+}
+
+func (l *UDP) toBytes() ([]byte, error) {
+	b := make([]byte, header.UDPMinimumSize)
+	h := header.UDP(b)
+	if l.SrcPort != nil {
+		h.SetSourcePort(*l.SrcPort)
+	}
+	if l.DstPort != nil {
+		h.SetDestinationPort(*l.DstPort)
+	}
+	if l.Length != nil {
+		h.SetLength(*l.Length)
+	} else {
+		h.SetLength(uint16(totalLength(l)))
+	}
+	if l.Checksum != nil {
+		h.SetChecksum(*l.Checksum)
+		return h, nil
+	}
+	if err := setUDPChecksum(&h, l); err != nil {
+		return nil, err
+	}
+	return h, nil
+}
+
+// setUDPChecksum calculates the checksum of the UDP header and sets it in h.
+func setUDPChecksum(h *header.UDP, udp *UDP) error {
+	h.SetChecksum(0)
+	xsum, err := layerChecksum(udp, header.UDPProtocolNumber)
+	if err != nil {
+		return err
+	}
+	h.SetChecksum(^h.CalculateChecksum(xsum))
+	return nil
+}
+
+// ParseUDP parses the bytes assuming that they start with a udp header and
+// continues parsing further encapsulations.
+func ParseUDP(b []byte) (Layers, error) {
+	h := header.UDP(b)
+	udp := UDP{
+		SrcPort:  Uint16(h.SourcePort()),
+		DstPort:  Uint16(h.DestinationPort()),
+		Length:   Uint16(h.Length()),
+		Checksum: Uint16(h.Checksum()),
+	}
+	layers := Layers{&udp}
+	moreLayers, err := ParsePayload(b[udp.length():])
+	if err != nil {
+		return nil, err
+	}
+	return append(layers, moreLayers...), nil
+}
+
+func (l *UDP) match(other Layer) bool {
+	return equalLayer(l, other)
+}
+
+func (l *UDP) length() int {
+	if l.Length == nil {
+		return header.UDPMinimumSize
+	}
+	return int(*l.Length)
+}
+
+// merge overrides the values in l with the values from other but only in fields
+// where the value is not nil.
+func (l *UDP) merge(other UDP) error {
 	return mergo.Merge(l, other, mergo.WithOverride)
 }
 

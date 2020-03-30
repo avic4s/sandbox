@@ -15,6 +15,17 @@ packetimpact_go_test(
     ],
 )
 
+packetimpact_go_test(
+    name = "udp_recv_multicast",
+    srcs = ["udp_recv_multicast_test.go"],
+    deps = [
+        "//pkg/tcpip",
+        "//pkg/tcpip/header",
+        "//test/packetimpact/testbench",
+        "@org_golang_x_sys//unix:go_default_library",
+    ],
+)
+
 sh_binary(
     name = "test_runner",
     srcs = ["test_runner.sh"],

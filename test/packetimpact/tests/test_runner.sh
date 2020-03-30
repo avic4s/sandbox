@@ -125,6 +125,19 @@ docker --version
 
 function finish {
   local cleanup_success=1
+
+  if [[ -z "${TSHARK-}" ]]; then
+    # Kill tcpdump so that it will flush output.
+    docker exec -t "${TESTBENCH}" \
+      killall tcpdump || \
+      cleanup_success=0
+  else
+    # Kill tshark so that it will flush output.
+    docker exec -t "${TESTBENCH}" \
+      killall tshark || \
+      cleanup_success=0
+  fi
+
   for net in "${CTRL_NET}" "${TEST_NET}"; do
     # Kill all processes attached to ${net}.
     for docker_command in "kill" "rm"; do
@@ -224,6 +237,8 @@ else
   # interface with the test packets.
   docker exec -t "${TESTBENCH}" \
     tshark -V -l -n -i "${TEST_DEVICE}" \
+    -o tcp.check_checksum:TRUE \
+    -o udp.check_checksum:TRUE \
     host "${TEST_NET_PREFIX}${TESTBENCH_NET_SUFFIX}" &
 fi
 
